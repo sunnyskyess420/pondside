@@ -18,9 +18,9 @@ from xml.sax.saxutils import escape
 
 import data as pdata
 
-HERE = Path(__file__).resolve().parent
-EXPORTS_DIR = HERE / "exports"
-FONTS = HERE / "assets" / "fonts" / "nunito"
+from paths import ASSETS, EXPORTS_DIR
+
+FONTS = ASSETS / "fonts" / "nunito"
 
 
 def _fmt(seconds):

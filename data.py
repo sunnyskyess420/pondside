@@ -11,7 +11,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent / "pondside.db"
+from paths import DB_PATH
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS checkins(

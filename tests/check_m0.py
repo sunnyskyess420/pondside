@@ -98,6 +98,64 @@ def main():
     except Exception as e:
         check("config.template.json valid", False, str(e))
 
+    # 5. paths: read-only art must ship inside the bundle, but your data must
+    # never be written into it. When frozen, __file__ sits in a temp folder
+    # that Windows deletes on exit, so data has to resolve next to the EXE.
+    # Running from source both point at the project, so nothing is migrated.
+    import importlib
+    import paths as pathsmod
+
+    check("from source: data stays in the project folder",
+          pathsmod.DATA_DIR == ROOT and pathsmod.BUNDLE_DIR == ROOT,
+          f"bundle={pathsmod.BUNDLE_DIR} data={pathsmod.DATA_DIR}")
+    check("from source: assets resolve inside the project",
+          pathsmod.ASSETS == ROOT / "assets", str(pathsmod.ASSETS))
+    check("from source: database sits beside the app",
+          pathsmod.DB_PATH == ROOT / "pondside.db", str(pathsmod.DB_PATH))
+
+    real_exe = sys.executable
+    had_frozen = hasattr(sys, "frozen")
+    try:
+        fake_bundle = Path(tempfile.mkdtemp()) / "_MEI12345"
+        fake_bundle.mkdir(parents=True, exist_ok=True)
+        fake_app = Path(tempfile.mkdtemp())
+        sys.frozen = True
+        sys._MEIPASS = str(fake_bundle)
+        sys.executable = str(fake_app / "Pondside.exe")
+        pathsmod = importlib.reload(pathsmod)
+
+        check("frozen: art is read from the unpacked bundle",
+              pathsmod.BUNDLE_DIR == fake_bundle, str(pathsmod.BUNDLE_DIR))
+        check("frozen: assets come from the bundle",
+              pathsmod.ASSETS == fake_bundle / "assets", str(pathsmod.ASSETS))
+        check("frozen: data goes next to the EXE, not the temp dir",
+              pathsmod.DATA_DIR == fake_app, str(pathsmod.DATA_DIR))
+        check("frozen: the database is never written into the bundle",
+              pathsmod.DB_PATH.parent != pathsmod.BUNDLE_DIR
+              and "_MEI" not in str(pathsmod.DB_PATH),
+              str(pathsmod.DB_PATH))
+        check("frozen: config and log follow the same rule",
+              pathsmod.CONFIG_PATH.parent == fake_app
+              and pathsmod.LOG_PATH.parent == fake_app, "")
+    except Exception as e:
+        check("frozen path resolution", False, str(e))
+    finally:
+        if not had_frozen:
+            try:
+                del sys.frozen
+            except AttributeError:
+                pass
+        try:
+            del sys._MEIPASS
+        except AttributeError:
+            pass
+        sys.executable = real_exe
+        importlib.reload(pathsmod)
+
+    check("paths restored after the frozen simulation",
+          pathsmod.DATA_DIR == ROOT and pathsmod.BUNDLE_DIR == ROOT,
+          f"bundle={pathsmod.BUNDLE_DIR} data={pathsmod.DATA_DIR}")
+
     print()
     print(f"{passes} passed, {failures} failed")
     return 1 if failures else 0

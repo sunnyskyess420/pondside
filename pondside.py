@@ -36,10 +36,8 @@ except Exception:  # pragma: no cover
 
 import data as pdata
 
-HERE = Path(__file__).resolve().parent
-ASSETS = HERE / "assets"
-CONFIG_PATH = HERE / "config.json"
-LOG_PATH = HERE / "pondside.log"
+# Art ships inside the bundle; your data sits beside the app. See paths.py.
+from paths import ASSETS, CONFIG_PATH, LOG_PATH
 
 # ── palette ───────────────────────────────────────────────────────────────
 BG     = "#241F2E"
