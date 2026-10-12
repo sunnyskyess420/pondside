@@ -37,7 +37,9 @@ except Exception:  # pragma: no cover
 import data as pdata
 
 # Art ships inside the bundle; your data sits beside the app. See paths.py.
-from paths import ASSETS, CONFIG_PATH, LOG_PATH
+from paths import (ASSETS, BUNDLE_DIR, CONFIG_PATH, DATA_DIR, LOG_PATH)
+
+APP_VERSION = "1.0.0"
 
 # ── palette ───────────────────────────────────────────────────────────────
 BG     = "#241F2E"
@@ -86,6 +88,83 @@ def peepers_assets_ready(scene_base=None, peepers_dir=None, poses=POSES):
     if not base.exists():
         return False
     return all((folder / f"peepers_{name}.png").exists() for name in poses)
+
+
+def selftest():
+    """Report where a running copy thinks its art and its data live.
+
+    A packaged Pondside is built windowed, so there is no console to print to
+    and a silent failure would look identical to success. This writes the
+    same report to a file as well, which is how a frozen build gets verified.
+    Returns 0 only when everything the app needs is actually present.
+    """
+    lines = [f"Pondside {APP_VERSION}"]
+    lines.append(f"frozen        : {bool(getattr(sys, 'frozen', False))}")
+    lines.append(f"bundle_dir    : {BUNDLE_DIR}")
+    lines.append(f"data_dir      : {DATA_DIR}")
+
+    ok = True
+
+    def need(label, path):
+        nonlocal ok
+        exists = Path(path).exists()
+        ok = ok and exists
+        lines.append(f"{label:<14}: {path}  exists={exists}")
+
+    need("assets", ASSETS)
+    need("scene.png", ASSETS / "scene.png")
+    need("icon.png", ASSETS / "icon.png")
+
+    # The M3.5 art is optional by design: without it the app falls back to
+    # the painted scene, so a missing pose is reported but never fatal.
+    alive = peepers_assets_ready()
+    lines.append(f"animated      : {alive}")
+    lines.append(f"backdrop      : {SCENE_BASE_PATH}  exists={SCENE_BASE_PATH.exists()}")
+    for name in POSES:
+        p = PEEPERS_DIR / f"peepers_{name}.png"
+        lines.append(f"pose {name:<8} : exists={p.exists()}")
+
+    fonts = sorted(ASSETS.glob("fonts/**/*.ttf"))
+    lines.append(f"bundled fonts : {len(fonts)}")
+    ok = ok and len(fonts) >= 1
+
+    # Anything imported lazily can be missed by the packager and then fail
+    # only when someone tries that one thing, which is the worst way to find
+    # out. Prove the Windows tray backend and the PDF writer are really here.
+    for mod in ("PIL", "pystray", "pystray._win32",
+                "reportlab.pdfgen.canvas"):
+        try:
+            __import__(mod)
+            lines.append(f"import {mod:<20} : ok")
+        except Exception as exc:
+            ok = False
+            lines.append(f"import {mod:<20} : FAILED {exc!r}")
+
+    lines.append(f"template      : {(BUNDLE_DIR / 'config.template.json')}"
+                 f"  exists={(BUNDLE_DIR / 'config.template.json').exists()}")
+
+    # Prove the data side is genuinely writable, not just present.
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        pdata.init_db()
+        lines.append(f"database      : {pdata.DB_PATH}  writable=True")
+    except Exception as exc:
+        ok = False
+        lines.append(f"database      : FAILED {exc!r}")
+
+    lines.append(f"exports       : {DATA_DIR / 'exports'}")
+    lines.append(f"RESULT        : {'OK' if ok else 'PROBLEMS FOUND'}")
+    report = "\n".join(lines)
+
+    try:
+        print(report)
+    except Exception:
+        pass
+    try:
+        (DATA_DIR / "selftest.txt").write_text(report, encoding="utf-8")
+    except Exception:
+        ok = False
+    return 0 if ok else 1
 
 
 def log_error():
@@ -1234,8 +1313,9 @@ class PondsideApp:
                 pystray.MenuItem("Let Peepers nap", _nap),
                 pystray.MenuItem("Quit", _quit),
             )
-            self.tray = pystray.Icon("pondside-m0", img,
-                                     "Pondside — Peepers says hi", menu)
+            self.tray = pystray.Icon("pondside", img,
+                                     f"Pondside {APP_VERSION} — Peepers says hi",
+                                     menu)
             threading.Thread(target=self.tray.run, daemon=True).start()
         except Exception:
             log_error()
@@ -1254,6 +1334,8 @@ class PondsideApp:
 
 
 def main():
+    if "--selftest" in sys.argv:
+        return selftest()
     smoke = "--smoke" in sys.argv
     root = tk.Tk()
     root.title("Pondside")
@@ -1268,4 +1350,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
