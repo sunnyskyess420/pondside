@@ -41,7 +41,7 @@ import data as pdata
 # Art ships inside the bundle; your data sits beside the app. See paths.py.
 from paths import (ASSETS, BUNDLE_DIR, CONFIG_PATH, DATA_DIR, LOG_PATH)
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 # ── palette ───────────────────────────────────────────────────────────────
 BG     = "#241F2E"
