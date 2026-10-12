@@ -78,15 +78,23 @@ PEEPERS_CX = 284
 PEEPERS_TOP = 78
 PEEPERS_H = 167            # his height once drawn, in pixels
 
-# ── the breath exercise ───────────────────────────────────────────────────
-# The exhale runs twice as long as the inhale. That ratio is the part that
-# actually leans on the parasympathetic side: a long, unhurried out-breath is
-# what settles the body, far more than the in-breath does. Four in, eight out,
-# five breaths, one minute. No breath holds - holding spikes anxiety for a lot
-# of people, and this is meant to be the easy part of the day.
+# ── box breathing ─────────────────────────────────────────────────────────
+# Four equal sides: breathe in, hold, breathe out, hold - four seconds each -
+# then round again, four times. The whole thing is a square you walk round,
+# which is the point: four equal sides. Anything unequal is not a box.
+# The holds are short on purpose; if they ever feel like too much, the answer
+# is to sit them out, not to push through them.
 BREATH_IN = 4.0
-BREATH_OUT = 8.0
-BREATH_TOTAL = 60.0
+BREATH_HOLD = 4.0
+BREATH_OUT = 4.0
+BREATH_ROUNDS = 4
+BREATH_CYCLE = BREATH_IN + BREATH_HOLD + BREATH_OUT + BREATH_HOLD
+BREATH_TOTAL = BREATH_CYCLE * BREATH_ROUNDS
+
+# On screen the circle travels those four sides: it widens, sits at its
+# widest, narrows, then rests at its smallest.
+BREATH_R_MIN = 70
+BREATH_R_MAX = 150
 
 _BREATH_WORDS = ("zero", "one", "two", "three", "four", "five", "six",
                  "seven", "eight", "nine", "ten", "eleven", "twelve")
@@ -95,6 +103,46 @@ _BREATH_WORDS = ("zero", "one", "two", "three", "four", "five", "six",
 def breath_word(n):
     n = int(round(n))
     return _BREATH_WORDS[n] if 0 <= n < len(_BREATH_WORDS) else str(n)
+
+
+def breath_words():
+    """The 'four in  ·  four hold  ·  ...' line, built from the constants."""
+    return "  ·  ".join((f"{breath_word(BREATH_IN)} in",
+                         f"{breath_word(BREATH_HOLD)} hold",
+                         f"{breath_word(BREATH_OUT)} out",
+                         f"{breath_word(BREATH_HOLD)} hold"))
+
+
+def breath_phase(elapsed):
+    """Which side of the box we are on, and how far along it.
+
+    Returns ``(index, label, progress)``, index 0-3 for in / hold / out /
+    hold and progress 0..1 along that side. Pure, so its shape can be checked
+    without a window.
+    """
+    pos = elapsed % BREATH_CYCLE
+    for index, (span, label) in enumerate(((BREATH_IN, "in…"),
+                                           (BREATH_HOLD, "hold…"),
+                                           (BREATH_OUT, "out…"),
+                                           (BREATH_HOLD, "hold…"))):
+        if pos < span:
+            return index, label, pos / span
+        pos -= span
+    return 3, "hold…", 1.0
+
+
+def breath_radius(index, progress):
+    """How wide the circle should be on that side of the box."""
+    progress = max(0.0, min(1.0, progress))
+    ease = 0.5 - 0.5 * math.cos(math.pi * progress)
+    span = BREATH_R_MAX - BREATH_R_MIN
+    if index == 0:          # breathing in: the box widens
+        return BREATH_R_MIN + span * ease
+    if index == 1:          # held full: the widest it ever gets
+        return BREATH_R_MAX
+    if index == 2:          # breathing out: it narrows again
+        return BREATH_R_MAX - span * ease
+    return BREATH_R_MIN     # held empty: at rest
 
 
 def peepers_assets_ready(scene_base=None, peepers_dir=None, poses=POSES):
@@ -525,7 +573,8 @@ class PondsideApp:
             cx += width + 14
 
         CanvasButton(self.canvas, 32, 706, WIN_W - 32, 772, 22,
-                     "Breathe with me  ·  60 sec", f.f(f.choice, 24, True),
+                     f"Breathe with me  ·  {int(BREATH_TOTAL)} sec",
+                     f.f(f.choice, 24, True),
                      self.show_breathe, fill=GOLD, hover="#F2D284",
                      text_fill=GOLDT, outline=GOLD)
 
@@ -740,13 +789,10 @@ class PondsideApp:
 
         self.canvas.create_text(WIN_W / 2, 150, text="Breathe with me",
                                 font=f.f(f.choice, 28, True), fill=TEXT)
-        breaths = int(round(BREATH_TOTAL / (BREATH_IN + BREATH_OUT)))
         self.canvas.create_text(
             WIN_W / 2, 196,
-            text=f"{breath_word(BREATH_IN)} in  ·  "
-                 f"{breath_word(BREATH_OUT)} out  ·  "
-                 f"{breath_word(breaths)} slow breaths",
-            font=f.f(f.choice, 19), fill=MUTED)
+            text=f"box breathing  ·  {breath_words()}",
+            font=f.f(f.choice, 18), fill=MUTED)
         self.circle = self.canvas.create_oval(0, 0, 0, 0, fill=GREEN,
                                               outline="")
         self.cue = self.canvas.create_text(WIN_W / 2, WIN_H / 2,
@@ -765,16 +811,8 @@ class PondsideApp:
             if elapsed >= BREATH_TOTAL:
                 self.finish_breathe()
                 return
-            pos = elapsed % (BREATH_IN + BREATH_OUT)
-            if pos < BREATH_IN:
-                p = pos / BREATH_IN
-                label = "in…"
-            else:
-                p = (pos - BREATH_IN) / BREATH_OUT
-                label = "out…"
-            ease = 0.5 - 0.5 * math.cos(math.pi * p)
-            radius = ((70 + 80 * ease) if pos < BREATH_IN
-                      else (150 - 80 * ease))
+            index, label, progress = breath_phase(elapsed)
+            radius = breath_radius(index, progress)
             cx, cy = WIN_W / 2, WIN_H / 2 + 20
             self.canvas.coords(self.circle, cx - radius, cy - radius,
                                cx + radius, cy + radius)

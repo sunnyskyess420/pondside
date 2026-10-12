@@ -25,9 +25,9 @@ Both are already on this machine from FrogPaper.
 
 - **Peepers window** — the glade, drifting fireflies, "Hi. I'm Peepers."
 - **Check-ins** — Rough / Okayish / Good. One tap. Saved locally.
-- **Breathe with me** — 60 seconds: four in, eight out, five times. The long
-  exhale is the part that settles you, so it runs twice the inhale. Ends with
-  *"there you are."*
+- **Breathe with me** — box breathing: in, hold, out, hold, four seconds a
+  side, then round again four times. A square you walk with your breath, and
+  the circle travels it with you. Ends with *"there you are."*
 - **Timers (M1)** — start something, live your life, stop it: the duration
   is computed for you, then a gentle *"did it help?"*. No math, ever. A
   running timer is never trapped in its own screen: leave whenever you like,
