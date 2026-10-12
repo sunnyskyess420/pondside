@@ -7,8 +7,8 @@ What M1 adds on top of M0:
   * Journal - short notes, saved locally.
   * Week - a gentle look back: what helped first, then soft numbers.
 
-M0 remains: the glade, one-tap check-ins, the 60-second breath, the font pick,
-the tray, quiet mode.
+M0 remains: the glade, one-tap check-ins, the breath, the font pick, the
+tray, quiet mode.
 
 Run:
   py -3.14 pondside.py            (or run_pondside.bat for no console window)
@@ -33,6 +33,8 @@ try:
     from PIL import Image, ImageDraw, ImageTk
 except Exception:  # pragma: no cover
     Image = None
+
+from collections import namedtuple
 
 import data as pdata
 
@@ -78,21 +80,35 @@ PEEPERS_CX = 284
 PEEPERS_TOP = 78
 PEEPERS_H = 167            # his height once drawn, in pixels
 
-# ── box breathing ─────────────────────────────────────────────────────────
-# Four equal sides: breathe in, hold, breathe out, hold - four seconds each -
-# then round again, four times. The whole thing is a square you walk round,
-# which is the point: four equal sides. Anything unequal is not a box.
-# The holds are short on purpose; if they ever feel like too much, the answer
-# is to sit them out, not to push through them.
-BREATH_IN = 4.0
-BREATH_HOLD = 4.0
-BREATH_OUT = 4.0
-BREATH_ROUNDS = 4
-BREATH_CYCLE = BREATH_IN + BREATH_HOLD + BREATH_OUT + BREATH_HOLD
-BREATH_TOTAL = BREATH_CYCLE * BREATH_ROUNDS
+# ── breathing patterns ───────────────────────────────────────────────────
+# A pattern is a shape you walk, one side at a time. Each side says what it
+# is, how many seconds it lasts, and what the circle does while you are on
+# it: "grow" widens it, "shrink" narrows it, "hold" keeps it at its widest
+# and "rest" keeps it at its smallest. Rounds is how many times round.
+#
+# Sessions are always whole rounds of whatever you picked - never a side left
+# half-breathed - so the totals differ between patterns and that is fine.
+BreathPattern = namedtuple("BreathPattern", "key name blurb sides rounds")
 
-# On screen the circle travels those four sides: it widens, sits at its
-# widest, narrows, then rests at its smallest.
+PATTERNS = (
+    BreathPattern(
+        "box", "Box", "steady, for a hard moment",
+        (("in…", 4.0, "grow"), ("hold…", 4.0, "hold"),
+         ("out…", 4.0, "shrink"), ("hold…", 4.0, "rest")), 4),
+    BreathPattern(
+        "exhale", "Long exhale", "the one for stress",
+        (("in…", 4.0, "grow"), ("out…", 6.0, "shrink")), 6),
+    BreathPattern(
+        "sleep", "Winding down", "in four, hold seven, out eight",
+        (("in…", 4.0, "grow"), ("hold…", 7.0, "hold"),
+         ("out…", 8.0, "shrink")), 3),
+    BreathPattern(
+        "even", "Even", "in five, out five, nothing to count",
+        (("in…", 5.0, "grow"), ("out…", 5.0, "shrink")), 6),
+)
+DEFAULT_PATTERN = "box"
+
+# On screen the circle travels the sides, between these two sizes.
 BREATH_R_MIN = 70
 BREATH_R_MAX = 150
 
@@ -105,44 +121,65 @@ def breath_word(n):
     return _BREATH_WORDS[n] if 0 <= n < len(_BREATH_WORDS) else str(n)
 
 
-def breath_words():
-    """The 'four in  ·  four hold  ·  ...' line, built from the constants."""
-    return "  ·  ".join((f"{breath_word(BREATH_IN)} in",
-                         f"{breath_word(BREATH_HOLD)} hold",
-                         f"{breath_word(BREATH_OUT)} out",
-                         f"{breath_word(BREATH_HOLD)} hold"))
+def pattern_by_key(key):
+    """The pattern for a saved key, falling back to the default.
 
-
-def breath_phase(elapsed):
-    """Which side of the box we are on, and how far along it.
-
-    Returns ``(index, label, progress)``, index 0-3 for in / hold / out /
-    hold and progress 0..1 along that side. Pure, so its shape can be checked
-    without a window.
+    An unknown or missing key (a fresh install, or a config from some other
+    version) must land somewhere sensible rather than raising.
     """
-    pos = elapsed % BREATH_CYCLE
-    for index, (span, label) in enumerate(((BREATH_IN, "in…"),
-                                           (BREATH_HOLD, "hold…"),
-                                           (BREATH_OUT, "out…"),
-                                           (BREATH_HOLD, "hold…"))):
-        if pos < span:
-            return index, label, pos / span
-        pos -= span
-    return 3, "hold…", 1.0
+    for p in PATTERNS:
+        if p.key == key:
+            return p
+    for p in PATTERNS:
+        if p.key == DEFAULT_PATTERN:
+            return p
+    return PATTERNS[0]
 
 
-def breath_radius(index, progress):
-    """How wide the circle should be on that side of the box."""
+def pattern_cycle(pattern):
+    """Seconds for one time round the shape."""
+    return sum(secs for _label, secs, _move in pattern.sides)
+
+
+def pattern_total(pattern):
+    """Seconds for the whole session."""
+    return pattern_cycle(pattern) * pattern.rounds
+
+
+def pattern_words(pattern):
+    """The 'four in  ·  four hold  ·  ...' line, built from the sides."""
+    return "  ·  ".join(f"{breath_word(secs)} {label.rstrip('…')}"
+                        for label, secs, _move in pattern.sides)
+
+
+def breath_phase(elapsed, pattern):
+    """Which side of the pattern we are on, and how far along it.
+
+    Returns ``(index, label, progress)`` with progress 0..1 along that side.
+    Pure, so the shape of any pattern can be checked without a window.
+    """
+    pos = elapsed % pattern_cycle(pattern)
+    for index, (label, secs, _move) in enumerate(pattern.sides):
+        if pos < secs:
+            return index, label, pos / secs
+        pos -= secs
+    last = len(pattern.sides) - 1
+    return last, pattern.sides[last][0], 1.0
+
+
+def breath_radius(index, progress, pattern):
+    """How wide the circle should be while you are on that side."""
+    _label, _secs, move = pattern.sides[index]
     progress = max(0.0, min(1.0, progress))
     ease = 0.5 - 0.5 * math.cos(math.pi * progress)
     span = BREATH_R_MAX - BREATH_R_MIN
-    if index == 0:          # breathing in: the box widens
+    if move == "grow":
         return BREATH_R_MIN + span * ease
-    if index == 1:          # held full: the widest it ever gets
-        return BREATH_R_MAX
-    if index == 2:          # breathing out: it narrows again
+    if move == "shrink":
         return BREATH_R_MAX - span * ease
-    return BREATH_R_MIN     # held empty: at rest
+    if move == "hold":
+        return BREATH_R_MAX
+    return BREATH_R_MIN     # "rest"
 
 
 def peepers_assets_ready(scene_base=None, peepers_dir=None, poses=POSES):
@@ -431,6 +468,9 @@ class PondsideApp:
         if saved in ("Quicksand", "Nunito") and self.fonts.families.get(saved):
             self.fonts.choice = saved
 
+        # the breathing pattern you chose last; box is the one we start on
+        self.breath_key = pattern_by_key(self.cfg.get("breath")).key
+
         self.canvas.bind("<Button-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._drag)
         root.bind("<Escape>", self._escape)
@@ -573,8 +613,10 @@ class PondsideApp:
             self.chip_ids[label] = b
             cx += width + 14
 
+        breath = pattern_by_key(self.breath_key)
         CanvasButton(self.canvas, 32, 706, WIN_W - 32, 772, 22,
-                     f"Breathe with me  ·  {int(BREATH_TOTAL)} sec",
+                     f"Breathe with me  ·  {breath.name}  ·  "
+                     f"{int(pattern_total(breath))} sec",
                      f.f(f.choice, 24, True),
                      self.show_breathe, fill=GOLD, hover="#F2D284",
                      text_fill=GOLDT, outline=GOLD)
@@ -788,15 +830,36 @@ class PondsideApp:
         self._breath_start = time.monotonic()
         self._breath_stopped = False
 
-        self.canvas.create_text(WIN_W / 2, 150, text="Breathe with me",
-                                font=f.f(f.choice, 28, True), fill=TEXT)
+        pat = pattern_by_key(self.breath_key)
+
+        self.canvas.create_text(WIN_W / 2, 144, text="Breathe with me",
+                                font=f.f(f.choice, 27, True), fill=TEXT)
+        self.canvas.create_text(WIN_W / 2, 184, text=pattern_words(pat),
+                                font=f.f(f.choice, 18), fill=MUTED)
         self.canvas.create_text(
-            WIN_W / 2, 196,
-            text=f"box breathing  ·  {breath_words()}",
-            font=f.f(f.choice, 18), fill=MUTED)
+            WIN_W / 2, 212,
+            text=f"{pat.blurb}  —  {breath_word(pat.rounds)} rounds, "
+                 f"{int(pattern_total(pat))} sec",
+            font=f.f(f.choice, 15), fill=SOFT)
+
+        # the patterns, one tap apart. The one you are breathing is the gold one.
+        gap = 8
+        width = (WIN_W - 64 - gap * (len(PATTERNS) - 1)) / len(PATTERNS)
+        x = 32
+        for option in PATTERNS:
+            chosen = option.key == pat.key
+            CanvasButton(self.canvas, x, 242, x + width, 292, 20,
+                         option.name, f.f(f.choice, 16, True),
+                         lambda k=option.key: self.choose_breath(k),
+                         fill=(GOLD if chosen else CTL),
+                         hover=("#F2D284" if chosen else HOVER),
+                         text_fill=(GOLDT if chosen else MUTED),
+                         outline=(GOLD if chosen else CTLBRD))
+            x += width + gap
+
         self.circle = self.canvas.create_oval(0, 0, 0, 0, fill=GREEN,
                                               outline="")
-        self.cue = self.canvas.create_text(WIN_W / 2, WIN_H / 2,
+        self.cue = self.canvas.create_text(WIN_W / 2, WIN_H / 2 + 20,
                                            text="in…",
                                            font=f.f(f.choice, 30, True),
                                            fill=GREENT)
@@ -806,14 +869,32 @@ class PondsideApp:
                      fill=CTL, hover=HOVER, text_fill=MUTED)
         self._breathe_tick()
 
+    def choose_breath(self, key):
+        """Swap to another pattern, and remember it for next time.
+
+        Leaving one pattern for another is a stop, so the attempt you walk
+        away from is logged exactly the way "stop for now" logs it.
+        """
+        if key == self.breath_key:
+            return
+        try:
+            pdata.add_breath(time.monotonic() - self._breath_start, False)
+        except Exception:
+            log_error()
+        self.breath_key = pattern_by_key(key).key
+        self.cfg["breath"] = self.breath_key
+        save_config(self.cfg)
+        self.show_breathe()
+
     def _breathe_tick(self):
         try:
+            pat = pattern_by_key(self.breath_key)
             elapsed = time.monotonic() - self._breath_start
-            if elapsed >= BREATH_TOTAL:
+            if elapsed >= pattern_total(pat):
                 self.finish_breathe()
                 return
-            index, label, progress = breath_phase(elapsed)
-            radius = breath_radius(index, progress)
+            index, label, progress = breath_phase(elapsed, pat)
+            radius = breath_radius(index, progress, pat)
             cx, cy = WIN_W / 2, WIN_H / 2 + 20
             self.canvas.coords(self.circle, cx - radius, cy - radius,
                                cx + radius, cy + radius)
@@ -838,7 +919,7 @@ class PondsideApp:
             return
         self._breath_stopped = True
         try:
-            pdata.add_breath(BREATH_TOTAL, True)
+            pdata.add_breath(pattern_total(pattern_by_key(self.breath_key)), True)
         except Exception:
             log_error()
         self.canvas.coords(self.circle, WIN_W / 2 - 80, WIN_H / 2 - 60,

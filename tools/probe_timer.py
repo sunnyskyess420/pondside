@@ -2,8 +2,8 @@
 
 The checked-in suites under tests/ are headless on purpose (no window), so the
 two behaviours here - a timer that keeps counting while you are somewhere else
-in the app, and the box-breathing screen - can only be proven against a real
-Tk canvas. That is what this script is for.
+in the app, and the breathing screen - can only be proven against a real Tk
+canvas. That is what this script is for.
 
 It opens a window for a couple of seconds, works entirely inside a throwaway
 temp folder, and never touches your pondside.db.
@@ -11,6 +11,7 @@ temp folder, and never touches your pondside.db.
     py -3.14 tools/probe_timer.py
 """
 
+import json
 import sqlite3
 import sys
 import tempfile
@@ -62,49 +63,79 @@ def main():
     app = pondside.PondsideApp(root)
     root.update()
 
-    # ── the shape of the box ──────────────────────────────────────────────
-    print("box breathing")
-    sides = (pondside.BREATH_IN, pondside.BREATH_HOLD,
-             pondside.BREATH_OUT, pondside.BREATH_HOLD)
-    check("all four sides of the box are the same length",
-          len(set(sides)) == 1, str(sides))
-    check("a cycle is exactly those four sides",
-          abs(pondside.BREATH_CYCLE - sum(sides)) < 1e-9,
-          f"{pondside.BREATH_CYCLE} vs {sum(sides)}")
-    rounds = pondside.BREATH_TOTAL / pondside.BREATH_CYCLE
-    check("the session is whole rounds, not part of one",
-          abs(rounds - round(rounds)) < 1e-9, f"{rounds} rounds")
-    check("and it is four of them",
-          int(round(rounds)) == pondside.BREATH_ROUNDS, f"{rounds}")
-
-    walked = [pondside.breath_phase(t)[0] for t in
-              (0.5, 3.5, 4.5, 7.5, 8.5, 11.5, 12.5, 15.5, 16.5)]
-    check("the box is walked in order, then round again",
-          walked == [0, 0, 1, 1, 2, 2, 3, 3, 0], str(walked))
-
-    def shape(t):
-        index, _label, progress = pondside.breath_phase(t)
-        return pondside.breath_radius(index, progress)
-
+    # ── every pattern has to add up ───────────────────────────────────────
+    print("breathing patterns")
     low, high = pondside.BREATH_R_MIN, pondside.BREATH_R_MAX
-    check("the circle widens on the way in", low < shape(2.0) < high,
-          f"{shape(2.0)}")
-    check("it sits at its widest right through the hold",
-          shape(4.0) == shape(5.0) == shape(6.0) == high,
-          f"{shape(4.0)} {shape(5.0)} {shape(6.0)}")
-    check("it narrows on the way out", low < shape(10.0) < high,
-          f"{shape(10.0)}")
-    check("and rests at its smallest through the last side",
-          shape(12.0) == shape(13.0) == shape(14.0) == low,
-          f"{shape(12.0)} {shape(13.0)} {shape(14.0)}")
+    keys = [p.key for p in pondside.PATTERNS]
+    check("there are a few of them, all named and explained",
+          len(pondside.PATTERNS) >= 3
+          and all(p.key and p.name and p.blurb for p in pondside.PATTERNS),
+          str(keys))
+    check("no two share a key", len(set(keys)) == len(keys), str(keys))
+    check("a missing or unknown setting lands on the default",
+          pondside.pattern_by_key(None).key == pondside.DEFAULT_PATTERN
+          and pondside.pattern_by_key("nonsense").key
+          == pondside.DEFAULT_PATTERN, pondside.DEFAULT_PATTERN)
 
-    # ── the same thing, driven through the real canvas ────────────────────
+    stress = pondside.pattern_by_key("exhale")
+    ins = [s for _l, s, m in stress.sides if m == "grow"]
+    outs = [s for _l, s, m in stress.sides if m == "shrink"]
+    check("the stress pattern breathes out for longer than it breathes in",
+          max(ins) < min(outs), f"in={ins} out={outs}")
+
+    def shape_at(t, pat):
+        index, label, progress = pondside.breath_phase(t, pat)
+        return label, pondside.breath_radius(index, progress, pat)
+
+    for pat in pondside.PATTERNS:
+        total = pondside.pattern_total(pat)
+        cycle = pondside.pattern_cycle(pat)
+        problems = []
+        at, starts = 0.0, []
+        for _l, secs, _m in pat.sides:
+            starts.append(at)
+            at += secs
+            if secs <= 0:
+                problems.append(f"a side lasts {secs}s")
+        if abs(cycle - at) > 1e-9:
+            problems.append(f"cycle {cycle} but sides add to {at}")
+        if abs(total - cycle * pat.rounds) > 1e-9:
+            problems.append(f"total {total} is not {pat.rounds} x {cycle}")
+        for (label, secs, move), start in zip(pat.sides, starts):
+            for frac in (0.0, 0.5, 0.999):
+                got, radius = shape_at(start + secs * frac, pat)
+                if got != label:
+                    problems.append(f"'{label}' at {frac} read as '{got}'")
+                if move == "hold" and abs(radius - high) > 1:
+                    problems.append(f"held full at {frac} was {radius:.1f}")
+                if move == "rest" and abs(radius - low) > 1:
+                    problems.append(f"at rest at {frac} was {radius:.1f}")
+            end = shape_at(start + secs * 0.999, pat)[1]
+            if move == "grow" and abs(end - high) > 1:
+                problems.append(f"'{label}' only reached {end:.1f}")
+            if move == "shrink" and abs(end - low) > 1:
+                problems.append(f"'{label}' only came down to {end:.1f}")
+        check(f"{pat.name}: the circle moves the way each side says",
+              not problems, "; ".join(problems))
+
+        walked, at = [], 0.0
+        for _round in range(pat.rounds):
+            for label, secs, _move in pat.sides:
+                walked.append(shape_at(at + secs / 2, pat)[0])
+                at += secs
+        expected = [label for _r in range(pat.rounds)
+                    for label, _s, _m in pat.sides]
+        check(f"{pat.name}: {pat.rounds} whole rounds, sides in order",
+              walked == expected, str(walked))
+        check(f"{pat.name}: it ends on its last side, not part way through",
+              shape_at(total - 1e-6, pat)[0] == pat.sides[-1][0],
+              f"{shape_at(total - 1e-6, pat)[0]!r}")
+        check(f"{pat.name}: a session, not a whole afternoon",
+              20 <= total <= 90, f"{total} sec")
+
+    # ── the same patterns, driven through the real canvas ─────────────────
     app.show_breathe()
     root.update_idletasks()
-    shown = texts_on_screen(app)
-    check("the screen names the exercise and all four sides",
-          any("box breathing" in t and "four hold" in t for t in shown),
-          str(shown))
 
     def cue_at(t):
         app._breath_start = time.monotonic() - t
@@ -112,15 +143,40 @@ def main():
         x0, _y0, x1, _y1 = app.canvas.coords(app.circle)
         return app.canvas.itemcget(app.cue, "text"), (x1 - x0) / 2
 
-    cues = {t: cue_at(t)[0] for t in (0.5, 5.0, 9.0, 13.0, 16.5)}
-    check("the cue walks in, hold, out, hold",
-          [cues[t] for t in (0.5, 5.0, 9.0, 13.0)]
-          == ["in…", "hold…", "out…", "hold…"], str(cues))
-    check("and the next round begins again", cues[16.5] == "in…", str(cues))
-    held_wide, held_empty = cue_at(5.0)[1], cue_at(13.0)[1]
-    check("the circle is held at its widest, then at its smallest",
-          abs(held_wide - high) < 1 and abs(held_empty - low) < 1,
-          f"{held_empty} -> {held_wide}")
+    for pat in pondside.PATTERNS:
+        app.choose_breath(pat.key)
+        root.update()
+
+        shown = " ".join(texts_on_screen(app))
+        missing = [f"{pondside.breath_word(s)} {l.rstrip('…')}"
+                   for l, s, _m in pat.sides
+                   if f"{pondside.breath_word(s)} {l.rstrip('…')}" not in shown]
+        check(f"{pat.name}: the screen spells out this pattern's sides",
+              not missing and pat.blurb in shown, f"{missing} | {shown[:170]}")
+
+        gold = [i for i in app.canvas.find_all()
+                if app.canvas.type(i) == "polygon"
+                and app.canvas.itemcget(i, "fill") == pondside.GOLD]
+        check(f"{pat.name}: exactly one chip is the chosen one",
+              len(gold) == 1, f"{len(gold)} highlighted")
+
+        second = pat.sides[1]
+        got = cue_at(pat.sides[0][1] + second[1] / 2)[0]
+        check(f"{pat.name}: the screen cues its own second side",
+              got == second[0], f"{got} != {second[0]}")
+        last = cue_at(pondside.pattern_total(pat) - 0.5)[0]
+        check(f"{pat.name}: still on its last side at the very end",
+              last == pat.sides[-1][0], f"{last} != {pat.sides[-1][0]}")
+
+        with sqlite3.connect(str(TMP / "probe.db")) as c:
+            before = [r[0] for r in c.execute("SELECT seconds FROM breaths")]
+        app._breath_start = time.monotonic() - pondside.pattern_total(pat)
+        app._breathe_tick()
+        with sqlite3.connect(str(TMP / "probe.db")) as c:
+            after = [r[0] for r in c.execute("SELECT seconds FROM breaths")]
+        check(f"{pat.name}: a finished session logs this pattern's length",
+              after == before + [int(pondside.pattern_total(pat))],
+              f"{before} -> {after}")
 
     # Drop the animation jobs we have been driving by hand, so no stray tick
     # fires later and logs a breath behind the checks below.
@@ -129,22 +185,22 @@ def main():
     app.show_main()
     root.update()
     on_main = " ".join(texts_on_screen(app))
-    check("the main button states the real length of a breath",
-          f"{int(pondside.BREATH_TOTAL)} sec" in on_main, on_main[:160])
+    chosen = pondside.pattern_by_key(app.breath_key)
+    check("the main button names the pattern you last chose, and its length",
+          chosen.name in on_main
+          and f"{int(pondside.pattern_total(chosen))} sec" in on_main,
+          on_main[:170])
 
-    app.show_breathe()
-    app._breath_start = time.monotonic() - pondside.BREATH_TOTAL
-    app._breathe_tick()
-    with sqlite3.connect(str(TMP / "probe.db")) as c:
-        secs = [r[0] for r in c.execute("SELECT seconds FROM breaths")]
-    check("a completed breath logs the whole session",
-          secs == [int(pondside.BREATH_TOTAL)], str(secs))
+    cfg = json.loads((TMP / "config.json").read_text(encoding="utf-8"))
+    check("and that choice is written down for next time",
+          cfg.get("breath") == chosen.key, str(cfg))
 
     # A finished breath lingers on "there you are." and then returns to the
     # main view. That return must not drag you off a view you move to in the
     # meantime - it used to, because it was scheduled outside clear().
     app.show_breathe()
-    app._breath_start = time.monotonic() - pondside.BREATH_TOTAL
+    app._breath_start = time.monotonic() - pondside.pattern_total(
+        pondside.pattern_by_key(app.breath_key))
     app._breathe_tick()               # finishes, schedules the way back
     app.show_week()
     time.sleep(2.0)                   # longer than the linger
