@@ -390,6 +390,7 @@ class PondsideApp:
         self._timer_job = None
         self._toast_job = None
         self._focus_job = None
+        self._nav_job = None
         self._breath_start = 0.0
         self._breath_stopped = False
         self._widgets = []
@@ -500,7 +501,7 @@ class PondsideApp:
 
     def _cancel_jobs(self):
         for attr in ("_anim_job", "_breathe_job", "_timer_job", "_toast_job",
-                     "_peepers_job", "_focus_job"):
+                     "_peepers_job", "_focus_job", "_nav_job"):
             job = getattr(self, attr)
             if job:
                 try:
@@ -844,7 +845,9 @@ class PondsideApp:
                            WIN_W / 2 + 80, WIN_H / 2 + 100)
         self.canvas.itemconfigure(self.cue, text="there you are.",
                                   font=self.fonts.f(self.fonts.choice, 26, True))
-        self.root.after(1800, self.show_main)
+        # A scheduled return, not a fixed one: if you wander off in the next
+        # moment, that is where you meant to be, and clear() cancels this.
+        self._after_job("_nav_job", 1800, self.show_main)
 
     # ── timer ─────────────────────────────────────────────────────────────
     def show_timer(self):

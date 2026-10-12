@@ -140,6 +140,20 @@ def main():
     check("a completed breath logs the whole session",
           secs == [int(pondside.BREATH_TOTAL)], str(secs))
 
+    # A finished breath lingers on "there you are." and then returns to the
+    # main view. That return must not drag you off a view you move to in the
+    # meantime - it used to, because it was scheduled outside clear().
+    app.show_breathe()
+    app._breath_start = time.monotonic() - pondside.BREATH_TOTAL
+    app._breathe_tick()               # finishes, schedules the way back
+    app.show_week()
+    time.sleep(2.0)                   # longer than the linger
+    root.update()
+    check("a finished breath doesn't drag you off the view you left for",
+          not app.canvas.find_withtag("quietline"),
+          f"stole the view: {app.canvas.find_withtag('quietline')}")
+    app._cancel_jobs()
+
     # ── starting a timer ──────────────────────────────────────────────────
     print("a timer you can walk away from")
     app.show_timer()
