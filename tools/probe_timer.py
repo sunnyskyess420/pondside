@@ -174,9 +174,31 @@ def main():
         app._breathe_tick()
         with sqlite3.connect(str(TMP / "probe.db")) as c:
             after = [r[0] for r in c.execute("SELECT seconds FROM breaths")]
+            logged = c.execute("SELECT seconds, pattern FROM breaths "
+                               "ORDER BY id DESC LIMIT 1").fetchone()
         check(f"{pat.name}: a finished session logs this pattern's length",
               after == before + [int(pondside.pattern_total(pat))],
               f"{before} -> {after}")
+        check(f"{pat.name}: and files it under this pattern",
+              logged == (int(pondside.pattern_total(pat)), pat.key),
+              str(logged))
+
+    # ── the week view says which breathing you reached for ────────────────
+    with sqlite3.connect(str(TMP / "probe.db")) as c:
+        c.execute("DELETE FROM breaths")
+        for key, count in (("exhale", 3), ("box", 1)):
+            for _ in range(count):
+                c.execute("INSERT INTO breaths(ts, seconds, completed, pattern)"
+                          " VALUES(?,?,?,?)", (time.time(), 60, 1, key))
+        c.execute("INSERT INTO breaths(ts, seconds, completed) VALUES(?,?,?)",
+                  (time.time(), 60, 1))   # from before patterns were logged
+    app.show_week()
+    root.update()
+    week = " ".join(texts_on_screen(app))
+    check("the week view says which breathing you reached for",
+          "mostly long exhale" in week, week[:260])
+    check("and still counts every breath, patterned or not",
+          "you breathed 5 times" in week, week[:260])
 
     # Drop the animation jobs we have been driving by hand, so no stray tick
     # fires later and logs a breath behind the checks below.

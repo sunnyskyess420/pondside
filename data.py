@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS breaths(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
     seconds INTEGER NOT NULL,
-    completed INTEGER NOT NULL
+    completed INTEGER NOT NULL,
+    pattern TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,9 +57,26 @@ def _db(path=None):
     return conn
 
 
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS cannot
+# change a table that is already there, so existing databases get them here,
+# one ALTER at a time. Old rows simply keep NULL - a breath taken before we
+# started writing the pattern down is still a breath that happened.
+_ADDED_COLUMNS = (
+    ("breaths", "pattern", "TEXT"),
+)
+
+
+def _upgrade(c):
+    for table, column, kind in _ADDED_COLUMNS:
+        have = {row[1] for row in c.execute(f"PRAGMA table_info({table})")}
+        if column not in have:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+
+
 def init_db(path=None):
     with _db(path) as c:
         c.executescript(_SCHEMA)
+        _upgrade(c)
 
 
 # ── check-ins ─────────────────────────────────────────────────────────────
@@ -73,12 +91,28 @@ def add_checkin(mood, energy=None, note=None, path=None):
 
 
 # ── breaths ───────────────────────────────────────────────────────────────
-def add_breath(seconds, completed, path=None):
+def add_breath(seconds, completed, pattern=None, path=None):
+    """Log a breath. ``pattern`` is the key of the pattern it was done in."""
     with _db(path) as c:
         c.execute(
-            "INSERT INTO breaths(ts, seconds, completed) VALUES(?,?,?)",
-            (time.time(), int(seconds), 1 if completed else 0),
+            "INSERT INTO breaths(ts, seconds, completed, pattern) "
+            "VALUES(?,?,?,?)",
+            (time.time(), int(seconds), 1 if completed else 0, pattern),
         )
+
+
+def week_patterns(since, path=None):
+    """Which patterns were actually breathed, most-used first.
+
+    Rows from before we recorded this are ignored rather than guessed at.
+    """
+    with _db(path) as c:
+        return c.execute(
+            "SELECT pattern, COUNT(*) FROM breaths "
+            "WHERE ts>=? AND pattern IS NOT NULL "
+            "GROUP BY pattern ORDER BY COUNT(*) DESC, pattern",
+            (since,),
+        ).fetchall()
 
 
 # ── sessions (timers) ─────────────────────────────────────────────────────
@@ -188,6 +222,7 @@ def week_stats(days=7, path=None):
         sess = c.execute(
             "SELECT activity, ts_start, ts_end, helped FROM sessions "
             "WHERE ts_start>=? AND ts_end IS NOT NULL", (since,)).fetchall()
+    patterns = week_patterns(since, path)
 
     total = 0.0
     helped = {}
@@ -202,6 +237,7 @@ def week_stats(days=7, path=None):
     return {
         "checkins": checkins,
         "breaths": breaths,
+        "patterns": patterns,
         "notes": notes,
         "sessions": len(sess),
         "total_seconds": int(total),
@@ -237,6 +273,7 @@ def week_detail(days=7, path=None):
         "checkins": checkins,
         "sessions": sessions,
         "breaths": breaths,
+        "patterns": week_patterns(since, path),
         "notes": notes,
         "worries_parked": parked,
         "worries_released": released,
@@ -254,7 +291,8 @@ def dump_all(path=None):
         return {
             "exported_at": time.time(),
             "checkins": rows("SELECT id, ts, mood, energy, note FROM checkins ORDER BY id"),
-            "breaths": rows("SELECT id, ts, seconds, completed FROM breaths ORDER BY id"),
+            "breaths": rows("SELECT id, ts, seconds, completed, pattern "
+                            "FROM breaths ORDER BY id"),
             "sessions": rows("SELECT id, ts_start, ts_end, activity, helped, note FROM sessions ORDER BY id"),
             "notes": rows("SELECT id, ts, text FROM notes ORDER BY id"),
             "worries": rows("SELECT id, ts_created, text, visited_at, released_at FROM worries ORDER BY id"),

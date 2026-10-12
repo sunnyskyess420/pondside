@@ -51,7 +51,11 @@ def seed(db):
         c.execute("INSERT INTO checkins(ts, mood) VALUES(?,?)", (now - 100, "Okayish"))
         c.execute("INSERT INTO checkins(ts, mood) VALUES(?,?)", (now - 2000, "Good"))
         c.execute("INSERT INTO breaths(ts, seconds, completed) VALUES(?,?,?)",
-                  (now - 300, 60, 1))
+                  (now - 300, 60, 1))          # from before patterns were logged
+        c.execute("INSERT INTO breaths(ts, seconds, completed, pattern) "
+                  "VALUES(?,?,?,?)", (now - 290, 60, 1, "exhale"))
+        c.execute("INSERT INTO breaths(ts, seconds, completed, pattern) "
+                  "VALUES(?,?,?,?)", (now - 280, 64, 1, "box"))
         c.execute("INSERT INTO sessions(ts_start, ts_end, activity, helped) "
                   "VALUES(?,?,?,?)", (now - 900, now - 300, "a walk", "yes"))
         c.execute("INSERT INTO sessions(ts_start, ts_end, activity, helped) "
@@ -91,6 +95,25 @@ def main():
     except Exception as e:
         check("weekly PDF is written", False, str(e))
 
+    # the breathing sentence in that PDF, checked directly rather than by
+    # reading a compressed PDF back
+    import pondside as ps
+    names = ps.PATTERN_NAMES
+    check("the PDF names the patterns in words, not keys",
+          pexports.breath_line(3, [("exhale", 2), ("box", 1)], names)
+          == "Breaths taken: 3 (Long exhale x2, Box x1).",
+          pexports.breath_line(3, [("exhale", 2), ("box", 1)], names))
+    check("a week with no recorded patterns still says the count",
+          pexports.breath_line(2, []) == "Breaths taken: 2.",
+          pexports.breath_line(2, []))
+    check("every pattern has a name to show",
+          set(names) == {p.key for p in ps.PATTERNS}
+          and all(names.values()), str(names))
+    check("an unknown key stands in for itself rather than crashing",
+          pexports.breath_line(1, [("gone", 1)], names)
+          == "Breaths taken: 1 (gone x1).",
+          pexports.breath_line(1, [("gone", 1)], names))
+
     # backup zip
     try:
         zpath = pexports.backup_zip(path=db, out_dir=out)
@@ -111,6 +134,13 @@ def main():
             check("sessions.csv keeps helped",
                   [s["helped"] for s in sessions] == ["yes", "no"],
                   str([s["helped"] for s in sessions]))
+            breaths = list(csv.DictReader(
+                io.StringIO(z.read("breaths.csv").decode("utf-8"))))
+            check("breaths.csv carries the pattern column",
+                  breaths and "pattern" in breaths[0], str(breaths[:1]))
+            check("and keeps each breath's pattern",
+                  [b["pattern"] for b in breaths] == ["", "exhale", "box"],
+                  str([b["pattern"] for b in breaths]))
             notes = z.read("README.txt").decode("utf-8")
             check("backup carries its little README", "Peepers" in notes)
     except Exception as e:

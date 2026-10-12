@@ -8,14 +8,18 @@ Proves (no window, no network):
   1. pondside.py and data.py compile.
   2. The scene, icon and all four font files are present and loadable.
   3. Check-ins and breaths round-trip through the database (temp file).
-  4. config.template.json is valid and shaped the way the app expects.
+  4. A database written before the breaths table had a pattern column is
+     upgraded in place, losing nothing, and upgrading twice is harmless.
+  5. config.template.json is valid and shaped the way the app expects.
 
 Exits non-zero if anything fails.
 """
 
 import json
+import sqlite3
 import sys
 import tempfile
+import time
 import py_compile
 from pathlib import Path
 
@@ -89,6 +93,57 @@ def main():
         check("stats totals", st["checkins"] == 2 and st["breaths"] == 2, str(st))
     except Exception as e:
         check("data round-trip", False, str(e))
+
+    # 4. the breaths table remembers which pattern a breath was done in, and a
+    # database from before that column existed is upgraded in place without
+    # losing a single row of anyone's history.
+    old = Path(tempfile.mkdtemp()) / "old.db"
+    try:
+        with sqlite3.connect(str(old)) as c:
+            c.execute("CREATE TABLE breaths("
+                      "id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,"
+                      " seconds INTEGER NOT NULL, completed INTEGER NOT NULL)")
+            c.execute("INSERT INTO breaths(ts, seconds, completed) VALUES(?,?,?)",
+                      (time.time() - 120, 60, 1))
+        cols_before = [r[1] for r in
+                       sqlite3.connect(str(old)).execute("PRAGMA table_info(breaths)")]
+        check("an old database has no pattern column yet",
+              "pattern" not in cols_before, str(cols_before))
+
+        pdata.init_db(old)
+        cols_after = [r[1] for r in
+                      sqlite3.connect(str(old)).execute("PRAGMA table_info(breaths)")]
+        check("upgrading adds the pattern column",
+              "pattern" in cols_after, str(cols_after))
+        with sqlite3.connect(str(old)) as c:
+            rows = c.execute(
+                "SELECT seconds, completed, pattern FROM breaths").fetchall()
+        check("upgrading loses none of your history",
+              rows == [(60, 1, None)], str(rows))
+
+        pdata.init_db(old)
+        cols_again = [r[1] for r in
+                      sqlite3.connect(str(old)).execute("PRAGMA table_info(breaths)")]
+        check("upgrading an already-upgraded database is harmless",
+              cols_again == cols_after, str(cols_again))
+
+        pdata.add_breath(64, True, pattern="box", path=old)
+        with sqlite3.connect(str(old)) as c:
+            stored = c.execute("SELECT pattern FROM breaths ORDER BY id").fetchall()
+        check("a new breath records its pattern",
+              stored == [(None,), ("box",)], str(stored))
+        check("a breath from before is left alone, not guessed at",
+              pdata.week_patterns(0, path=old) == [("box", 1)],
+              str(pdata.week_patterns(0, path=old)))
+
+        # The backup must carry the new column, or a restore would quietly
+        # lose which patterns someone was breathing.
+        dumped = pdata.dump_all(path=old)["breaths"]
+        check("a backup carries the pattern with each breath",
+              dumped and "pattern" in dumped[0],
+              str(dumped[:1]))
+    except Exception as e:
+        check("breath pattern upgrade", False, str(e))
 
     # 4. config template
     try:

@@ -31,14 +31,17 @@ Both are already on this machine from FrogPaper.
   for stress), **Winding down** (in four, hold seven, out eight) and
   **Even** (in five, out five). The circle travels whatever shape you pick,
   and a session always finishes the round you are in rather than stopping
-  mid-breath. Ends with *"there you are."*
+  mid-breath. Peepers remembers which pattern each breath was done in, so the
+  Week view can tell you which one you actually reach for. Ends with
+  *"there you are."*
 - **Timers (M1)** — start something, live your life, stop it: the duration
   is computed for you, then a gentle *"did it help?"*. No math, ever. A
   running timer is never trapped in its own screen: leave whenever you like,
   the app keeps counting, and a small pill on the main view shows the
   activity and the time so you can tap straight back to it.
 - **Journal (M1)** — short notes, saved locally. One line counts.
-- **Week (M1)** — a gentle look back: *what helped* first, soft numbers after.
+- **Week (M1)** — a gentle look back: *what helped* first, soft numbers after,
+  including which breathing you reached for (*"mostly long exhale"*).
 - **The worry jar (M2)** — give Peepers what's heavy (or just tap *"it's
   heavy"* when words won't come). The jar holds a count, not a pile.
   Visit it whenever you choose — *nothing here expires* — and set things

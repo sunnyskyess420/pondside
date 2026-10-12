@@ -108,6 +108,10 @@ PATTERNS = (
 )
 DEFAULT_PATTERN = "box"
 
+# What each stored key is called on screen. Derived, never typed twice, so the
+# database and the Week view cannot disagree.
+PATTERN_NAMES = {p.key: p.name for p in PATTERNS}
+
 # On screen the circle travels the sides, between these two sizes.
 BREATH_R_MIN = 70
 BREATH_R_MAX = 150
@@ -878,7 +882,8 @@ class PondsideApp:
         if key == self.breath_key:
             return
         try:
-            pdata.add_breath(time.monotonic() - self._breath_start, False)
+            pdata.add_breath(time.monotonic() - self._breath_start, False,
+                             pattern=self.breath_key)
         except Exception:
             log_error()
         self.breath_key = pattern_by_key(key).key
@@ -909,7 +914,8 @@ class PondsideApp:
             return
         self._breath_stopped = True
         try:
-            pdata.add_breath(time.monotonic() - self._breath_start, False)
+            pdata.add_breath(time.monotonic() - self._breath_start, False,
+                             pattern=self.breath_key)
         except Exception:
             log_error()
         self.show_main()
@@ -919,7 +925,8 @@ class PondsideApp:
             return
         self._breath_stopped = True
         try:
-            pdata.add_breath(pattern_total(pattern_by_key(self.breath_key)), True)
+            pdata.add_breath(pattern_total(pattern_by_key(self.breath_key)), True,
+                             pattern=self.breath_key)
         except Exception:
             log_error()
         self.canvas.coords(self.circle, WIN_W / 2 - 80, WIN_H / 2 - 60,
@@ -1207,6 +1214,11 @@ class PondsideApp:
             f"you tracked {fmt_dur(st['total_seconds'])} across "
             f"{st['sessions']} session{'s' if st['sessions'] != 1 else ''}",
         ]
+        # Which breathing you actually reached for. Only worth saying once it
+        # is a habit rather than a one-off - one breath is not a pattern.
+        if st.get("patterns") and st["patterns"][0][1] >= 2:
+            lines.insert(2, "mostly "
+                         + pattern_by_key(st["patterns"][0][0]).name.lower())
         if st["notes"]:
             lines.append(f"you wrote {st['notes']} note{'s' if st['notes'] != 1 else ''}")
         if st["top"]:
@@ -1234,7 +1246,7 @@ class PondsideApp:
     def week_save_pdf(self):
         try:
             import exports as pexports
-            out = pexports.week_pdf()
+            out = pexports.week_pdf(pattern_names=PATTERN_NAMES)
         except Exception:
             log_error()
             self.canvas.itemconfigure(

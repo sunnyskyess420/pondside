@@ -9,7 +9,8 @@ Proves (no window, no network):
   2. Sessions round-trip: start -> finish -> helped; drop; stale cleanup.
   3. Notes round-trip.
   4. week_stats() counts and windows (7 days) are correct, including
-     "what helped" aggregation and duration totals.
+     "what helped" aggregation and duration totals, and which breathing
+     patterns were actually used.
   5. format helpers behave (durations and clocks).
 
 Exits non-zero if anything fails.
@@ -101,13 +102,30 @@ def main():
                   (now - 100, "still open"))  # unfinished: out of totals
         c.execute("INSERT INTO checkins(ts, mood) VALUES(?,?)", (now - 60, "Good"))
         c.execute("INSERT INTO checkins(ts, mood) VALUES(?,?)", (now - 900000, "Rough"))
+        # one breath from before the app recorded patterns, then a week of
+        # them - and one well outside the window
         c.execute("INSERT INTO breaths(ts, seconds, completed) VALUES(?,?,?)",
                   (now - 90, 60, 1))
+        for ts, secs, key in ((now - 88, 64, "exhale"),
+                              (now - 86, 64, "exhale"),
+                              (now - 84, 64, "exhale"),
+                              (now - 82, 64, "box"),
+                              (now - 80, 57, "sleep"),
+                              (now - 900000, 64, "even")):
+            c.execute("INSERT INTO breaths(ts, seconds, completed, pattern) "
+                      "VALUES(?,?,?,?)", (ts, secs, 1, key))
         c.execute("INSERT INTO notes(ts, text) VALUES(?,?)", (now - 80, "a note"))
 
     st = pdata.week_stats(days=7, path=tmp2)
     check("week: check-in window", st["checkins"] == 1, str(st["checkins"]))
-    check("week: breaths window", st["breaths"] == 1, str(st["breaths"]))
+    check("week: breaths window", st["breaths"] == 6, str(st["breaths"]))
+    check("week: which patterns were breathed, most used first",
+          st["patterns"] == [("exhale", 3), ("box", 1), ("sleep", 1)],
+          str(st["patterns"]))
+    check("week: patterns respect the same 7-day window",
+          all(k != "even" for k, _n in st["patterns"]), str(st["patterns"]))
+    check("week: a breath taken before patterns were recorded is not guessed",
+          sum(n for _k, n in st["patterns"]) == 5, str(st["patterns"]))
     check("week: notes window", st["notes"] == 1, str(st["notes"]))
     check("week: finished sessions only", st["sessions"] == 3, str(st["sessions"]))
     check("week: duration total", st["total_seconds"] == 600,
@@ -116,6 +134,12 @@ def main():
           st["helped"] == [("tea", 220.0), ("walk", 180.0)], str(st["helped"]))
     check("week: top by time includes non-helpers",
           st["top"][0] == ("tea", 220.0), str(st["top"]))
+
+    detail = pdata.week_detail(days=7, path=tmp2)
+    check("week detail carries the patterns for the PDF",
+          detail["patterns"] == st["patterns"], str(detail["patterns"]))
+    check("week detail still counts every breath, patterned or not",
+          detail["breaths"] == 6, str(detail["breaths"]))
 
     # 5. formatting helpers (import the app module textually - it is a GUI
     # module, so we only borrow the pure functions by exec of their source)

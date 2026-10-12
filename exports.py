@@ -35,14 +35,33 @@ def _fmt(seconds):
     return f"{h} h {m} min"
 
 
+def breath_line(breaths, patterns, names=None):
+    """The breathing sentence for the weekly PDF.
+
+    Pure, so it can be checked without reading a PDF back: a week with no
+    recorded patterns simply says how many breaths there were, and any older
+    breath is counted but never guessed at.
+    """
+    if not patterns:
+        return f"Breaths taken: {breaths}."
+    names = names or {}
+    made_of = ", ".join(f"{names.get(key, key)} x{n}" for key, n in patterns)
+    return f"Breaths taken: {breaths} ({made_of})."
+
+
 def _ensure_dir(out_dir=None):
     d = Path(out_dir) if out_dir else EXPORTS_DIR
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def week_pdf(path=None, out_dir=None, days=7):
-    """Build the one-page weekly review. Returns the PDF path."""
+def week_pdf(path=None, out_dir=None, days=7, pattern_names=None):
+    """Build the one-page weekly review. Returns the PDF path.
+
+    ``pattern_names`` maps a stored breathing-pattern key to what it is
+    called on screen. The app passes it in, so the two never drift; on a
+    direct call the keys stand in for themselves.
+    """
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
                                     HRFlowable)
@@ -53,6 +72,7 @@ def week_pdf(path=None, out_dir=None, days=7):
 
     d = _ensure_dir(out_dir)
     detail = pdata.week_detail(days, path=path)
+    names = pattern_names or {}
 
     pdfmetrics.registerFont(TTFont("Nunito", str(FONTS / "nunito-v32-latin-regular.ttf")))
     pdfmetrics.registerFont(TTFont("Nunito-Bold", str(FONTS / "nunito-v32-latin-700.ttf")))
@@ -109,7 +129,9 @@ def week_pdf(path=None, out_dir=None, days=7):
             f"Check-ins: {len(detail['checkins'])} ({mood_line}).", b_s))
     else:
         story.append(Paragraph("No check-ins this week - that is okay.", b_s))
-    story.append(Paragraph(f"Breaths taken: {detail['breaths']}.", b_s))
+    story.append(Paragraph(
+        escape(breath_line(detail["breaths"], detail.get("patterns"), names)),
+        b_s))
     total = sum(max(0.0, (s1 or s0) - s0) for (s0, s1, _a, _h) in detail["sessions"])
     story.append(Paragraph(
         f"Time tracked: {_fmt(total)} across {len(detail['sessions'])} "
