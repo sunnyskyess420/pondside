@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+config.json
+# your real exports live here: a weekly PDF and a backup zip holding every
+# check-in, note and worry. Never commit them.
+exports/
+pondside.db
+pondside.db-shm
+pondside.db-wal
+pondside.log
+*.bak
+*.bak-*
