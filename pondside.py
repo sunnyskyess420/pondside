@@ -78,6 +78,24 @@ PEEPERS_CX = 284
 PEEPERS_TOP = 78
 PEEPERS_H = 167            # his height once drawn, in pixels
 
+# ── the breath exercise ───────────────────────────────────────────────────
+# The exhale runs twice as long as the inhale. That ratio is the part that
+# actually leans on the parasympathetic side: a long, unhurried out-breath is
+# what settles the body, far more than the in-breath does. Four in, eight out,
+# five breaths, one minute. No breath holds - holding spikes anxiety for a lot
+# of people, and this is meant to be the easy part of the day.
+BREATH_IN = 4.0
+BREATH_OUT = 8.0
+BREATH_TOTAL = 60.0
+
+_BREATH_WORDS = ("zero", "one", "two", "three", "four", "five", "six",
+                 "seven", "eight", "nine", "ten", "eleven", "twelve")
+
+
+def breath_word(n):
+    n = int(round(n))
+    return _BREATH_WORDS[n] if 0 <= n < len(_BREATH_WORDS) else str(n)
+
 
 def peepers_assets_ready(scene_base=None, peepers_dir=None, poses=POSES):
     """Is the M3.5 art fully installed? Pure and headless, so it can be
@@ -323,6 +341,7 @@ class PondsideApp:
         self._breathe_job = None
         self._timer_job = None
         self._toast_job = None
+        self._focus_job = None
         self._breath_start = 0.0
         self._breath_stopped = False
         self._widgets = []
@@ -336,6 +355,12 @@ class PondsideApp:
         self._peepers_job = None
         self._blink_until = 0.0
         self._next_blink = 0.0
+        # Timer displays. A running session outlives the view it was started
+        # from, so these are cleared with the canvas but the timer is not.
+        self.elapsed_id = None
+        self.timer_line_id = None
+        self.timer_nap_id = None
+        self._timeline_job = None
 
         root.overrideredirect(True)
         root.configure(bg=BG)
@@ -409,9 +434,25 @@ class PondsideApp:
                 pass
         setattr(self, attr, self.root.after(ms, run))
 
+    def _focus_later(self, widget):
+        """Focus an entry a moment after it appears - if it still exists.
+
+        Walking straight into ``after(60, widget.focus_set)`` throws into the
+        console when you have already moved on: by then the widget is gone.
+        """
+
+        def run():
+            try:
+                if widget.winfo_exists():
+                    widget.focus_set()
+            except tk.TclError:
+                pass
+
+        self._after_job("_focus_job", 60, run)
+
     def _cancel_jobs(self):
         for attr in ("_anim_job", "_breathe_job", "_timer_job", "_toast_job",
-                     "_peepers_job"):
+                     "_peepers_job", "_focus_job"):
             job = getattr(self, attr)
             if job:
                 try:
@@ -431,6 +472,9 @@ class PondsideApp:
         self.canvas.delete("all")
         self.fireflies = []
         self.peepers_id = None
+        self.elapsed_id = None
+        self.timer_line_id = None
+        self.timer_nap_id = None
 
     def titlebar(self, title="Pondside", back=None):
         f = self.fonts
@@ -501,6 +545,8 @@ class PondsideApp:
             WIN_W / 2, 878, text="quiet mode is always on — tap to let me nap",
             font=f.f(f.choice, 17), fill=SOFT, tags=("quietline",))
         self.canvas.tag_bind("quietline", "<Button-1>", self._quiet_tap)
+
+        self.place_timer_pill()
 
         self._anim_job = self.root.after(70, self.animate)
         if self.alive:
@@ -694,9 +740,13 @@ class PondsideApp:
 
         self.canvas.create_text(WIN_W / 2, 150, text="Breathe with me",
                                 font=f.f(f.choice, 28, True), fill=TEXT)
-        self.canvas.create_text(WIN_W / 2, 196,
-                                text="four in  ·  six out  ·  six slow breaths",
-                                font=f.f(f.choice, 19), fill=MUTED)
+        breaths = int(round(BREATH_TOTAL / (BREATH_IN + BREATH_OUT)))
+        self.canvas.create_text(
+            WIN_W / 2, 196,
+            text=f"{breath_word(BREATH_IN)} in  ·  "
+                 f"{breath_word(BREATH_OUT)} out  ·  "
+                 f"{breath_word(breaths)} slow breaths",
+            font=f.f(f.choice, 19), fill=MUTED)
         self.circle = self.canvas.create_oval(0, 0, 0, 0, fill=GREEN,
                                               outline="")
         self.cue = self.canvas.create_text(WIN_W / 2, WIN_H / 2,
@@ -712,18 +762,19 @@ class PondsideApp:
     def _breathe_tick(self):
         try:
             elapsed = time.monotonic() - self._breath_start
-            if elapsed >= 60:
+            if elapsed >= BREATH_TOTAL:
                 self.finish_breathe()
                 return
-            pos = elapsed % 10.0
-            if pos < 4:
-                p = pos / 4
+            pos = elapsed % (BREATH_IN + BREATH_OUT)
+            if pos < BREATH_IN:
+                p = pos / BREATH_IN
                 label = "in…"
             else:
-                p = (pos - 4) / 6
+                p = (pos - BREATH_IN) / BREATH_OUT
                 label = "out…"
             ease = 0.5 - 0.5 * math.cos(math.pi * p)
-            radius = (70 + 80 * ease) if pos < 4 else (150 - 80 * ease)
+            radius = ((70 + 80 * ease) if pos < BREATH_IN
+                      else (150 - 80 * ease))
             cx, cy = WIN_W / 2, WIN_H / 2 + 20
             self.canvas.coords(self.circle, cx - radius, cy - radius,
                                cx + radius, cy + radius)
@@ -748,7 +799,7 @@ class PondsideApp:
             return
         self._breath_stopped = True
         try:
-            pdata.add_breath(60, True)
+            pdata.add_breath(BREATH_TOTAL, True)
         except Exception:
             log_error()
         self.canvas.coords(self.circle, WIN_W / 2 - 80, WIN_H / 2 - 60,
@@ -760,7 +811,12 @@ class PondsideApp:
     # ── timer ─────────────────────────────────────────────────────────────
     def show_timer(self):
         self.clear()
-        self._running = None
+        # A timer you started is never thrown away by leaving this view. Coming
+        # back just shows it again, still counting from your real start.
+        if self._running:
+            self.timer_running(self._running["id"], self._running["activity"],
+                               t0=self._running["t0"])
+            return
         f = self.fonts
         self.titlebar("A timer", back=self.show_main)
 
@@ -804,7 +860,7 @@ class PondsideApp:
                                         font=f.f(f.choice, 18), fill=SOFT)
                 y += 30
 
-        self.root.after(60, entry.focus_set)
+        self._focus_later(entry)
 
     def timer_start(self):
         activity = (self.entry.get() or "").strip()
@@ -817,11 +873,12 @@ class PondsideApp:
             return
         self.timer_running(sid, activity)
 
-    def timer_running(self, sid, activity):
+    def timer_running(self, sid, activity, t0=None):
         self.clear()
         f = self.fonts
-        self.titlebar("A timer")
-        self._running = {"id": sid, "activity": activity, "t0": time.time()}
+        self.titlebar("A timer", back=self.show_main)
+        self._running = {"id": sid, "activity": activity,
+                         "t0": time.time() if t0 is None else t0}
 
         self.canvas.create_text(WIN_W / 2, 190, text=activity,
                                 font=f.f(f.choice, 30, True), fill=TEXT)
@@ -829,6 +886,11 @@ class PondsideApp:
             WIN_W / 2, 320, text="0:00", font=f.f(f.choice, 64, True), fill=GOLD)
         self.canvas.create_text(WIN_W / 2, 386, text="no rush. I'll wait.",
                                 font=f.f(f.choice, 18), fill=SOFT)
+        self.canvas.create_text(
+            WIN_W / 2, 418,
+            text="leave whenever you like — I'll keep counting, and wait for "
+                 "you on the way back.",
+            font=f.f(f.choice, 16), fill=SOFT)
 
         CanvasButton(self.canvas, 32, 470, WIN_W - 32, 536, 22, "finish",
                      f.f(f.choice, 23, True), self.timer_finish_prompt,
@@ -840,10 +902,11 @@ class PondsideApp:
 
     def _timer_tick(self):
         try:
-            if not self._running:
+            if not self._running or self.elapsed_id is None:
                 return
-            elapsed = time.time() - self._running["t0"]
-            self.canvas.itemconfigure(self.elapsed_id, text=fmt_clock(elapsed))
+            self.canvas.itemconfigure(
+                self.elapsed_id,
+                text=fmt_clock(time.time() - self._running["t0"]))
             self._timer_job = self.root.after(1000, self._timer_tick)
         except tk.TclError:
             pass
@@ -854,6 +917,7 @@ class PondsideApp:
                 pdata.drop_session(self._running["id"])
             except Exception:
                 log_error()
+        self._running = None
         self.show_main()
 
     def timer_finish_prompt(self):
@@ -943,7 +1007,7 @@ class PondsideApp:
         self.canvas.create_text(32, 524, anchor="nw", text="lately:",
                                 font=f.f(f.choice, 18, True), fill=MUTED)
         self.draw_notes(550)
-        self.root.after(60, text.focus_set)
+        self._focus_later(text)
 
     def draw_notes(self, y):
         f = self.fonts
@@ -1087,8 +1151,6 @@ class PondsideApp:
             self.nap()
 
     def nap(self):
-        if self._running:
-            return  # never tuck the timer away mid-run
         self.napping = True
         self.clear()
         f = self.fonts
@@ -1108,10 +1170,64 @@ class PondsideApp:
         self.canvas.create_text(WIN_W / 2, 692,
                                 text="tap anywhere when you need me.",
                                 font=f.f(f.choice, 18), fill=SOFT)
+        if self._running:
+            self.timer_nap_id = self.canvas.create_text(
+                WIN_W / 2, 736, text=self._timer_pill_text(),
+                font=f.f(f.choice, 17), fill=GOLD)
+            self._start_timeline()
 
     def wake(self):
         self.napping = False
         self.show_main()
+
+    # ── a running timer, visible from wherever you are ────────────────────
+    def _timer_pill_text(self):
+        if not self._running:
+            return ""
+        name = self._running["activity"]
+        if len(name) > 16:
+            name = name[:15].rstrip() + "…"
+        return f"{name}  ·  {fmt_clock(time.time() - self._running['t0'])}"
+
+    def place_timer_pill(self):
+        """Quietly show, on the main view, that a timer is still going."""
+        if not self._running:
+            return
+        f = self.fonts
+        rrect(self.canvas, 392, 514, WIN_W - 32, 564, 22,
+              fill=CTL, outline=CTLBRD, tags=("timerpill",))
+        self.timer_line_id = self.canvas.create_text(
+            (392 + WIN_W - 32) / 2, 539, text=self._timer_pill_text(),
+            font=f.f(f.choice, 18, True), fill=GOLD, tags=("timerpill",))
+        self.canvas.tag_bind("timerpill", "<Button-1>", self._timer_pill_tap)
+        self._start_timeline()
+
+    def _timer_pill_tap(self, _e):
+        self.show_timer()
+        return "break"
+
+    def _start_timeline(self):
+        if self._timeline_job is None and self._running:
+            self._timeline_job = self.root.after(1000, self._timeline_tick)
+
+    def _timeline_tick(self):
+        """Keep the 'still counting' labels current.
+
+        This deliberately outlives clear(): the whole point is that a timer
+        keeps counting while you are somewhere else in the app.
+        """
+        try:
+            self._timeline_job = None
+            if not self._running:
+                return
+            text = self._timer_pill_text()
+            for attr in ("timer_line_id", "timer_nap_id"):
+                canvas_id = getattr(self, attr)
+                if canvas_id is not None:
+                    self.canvas.itemconfigure(canvas_id, text=text)
+            self._timeline_job = self.root.after(1000, self._timeline_tick)
+        except tk.TclError:
+            pass
 
     # ── the worry jar ─────────────────────────────────────────────────────
     def show_worry(self):
@@ -1170,7 +1286,7 @@ class PondsideApp:
 
         self.worry_note_id = self.canvas.create_text(
             WIN_W / 2, 630, text="", font=f.f(f.choice, 18), fill=GREEN)
-        self.root.after(60, entry.focus_set)
+        self._focus_later(entry)
 
     def worry_park(self, with_text=True):
         value = None

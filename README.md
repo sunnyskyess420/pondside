@@ -14,6 +14,7 @@ gentle week's look back, and exports you own.
 py -3.14 pondside.py            # or double-click run_pondside.bat (no console)
 py -3.14 pondside.py --smoke    # self-test: opens and closes after ~3s
 py -3.14 tests\check_m0.py      # headless checks (no window)
+py -3.14 tools\probe_timer.py   # live probe: needs a window, uses a temp db
 ```
 
 Requires: Python 3.11+, `pillow`, `pystray`, `reportlab`
@@ -24,10 +25,14 @@ Both are already on this machine from FrogPaper.
 
 - **Peepers window** — the glade, drifting fireflies, "Hi. I'm Peepers."
 - **Check-ins** — Rough / Okayish / Good. One tap. Saved locally.
-- **Breathe with me** — 60 seconds: four in, six out, six times. Ends with
+- **Breathe with me** — 60 seconds: four in, eight out, five times. The long
+  exhale is the part that settles you, so it runs twice the inhale. Ends with
   *"there you are."*
 - **Timers (M1)** — start something, live your life, stop it: the duration
-  is computed for you, then a gentle *"did it help?"*. No math, ever.
+  is computed for you, then a gentle *"did it help?"*. No math, ever. A
+  running timer is never trapped in its own screen: leave whenever you like,
+  the app keeps counting, and a small pill on the main view shows the
+  activity and the time so you can tap straight back to it.
 - **Journal (M1)** — short notes, saved locally. One line counts.
 - **Week (M1)** — a gentle look back: *what helped* first, soft numbers after.
 - **The worry jar (M2)** — give Peepers what's heavy (or just tap *"it's
@@ -59,6 +64,7 @@ Both are already on this machine from FrogPaper.
 | `assets/peepers/` | his three poses: awake, blink, sleep |
 | `tools/build_peepers.py` | derives blink + sleep from the awake pose |
 | `tools/shot.ps1` | grabs the borderless window for looking at |
+| `tools/probe_timer.py` | live probe (opens a window) for the timer + the breath |
 | `assets/icon.png` | tray icon (a small Peepers) |
 | `assets/fonts/` | Quicksand + Nunito (SIL OFL, bundled) |
 | `tests/check_m0.py` | headless checks (M0: assets, db, config) |
